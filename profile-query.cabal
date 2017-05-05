@@ -1,0 +1,22 @@
+name:                profile-query
+version:             0.1.0.0
+-- synopsis:
+-- description:
+homepage:            https://github.com/chrisdone/profile-query#readme
+license:             BSD3
+license-file:        LICENSE
+author:              Chris Done
+maintainer:          chrisdone@gmail.com
+copyright:           2015 Chris Done
+category:            Web
+build-type:          Simple
+extra-source-files:  README.md
+cabal-version:       >=1.10
+
+executable profile-query
+  hs-source-dirs:      app
+  main-is:             Main.hs
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N -O2
+  build-depends:       base
+                     , profile-query,  conduit, conduit-extra, ghc-prof, text, bytestring, attoparsec, containers ,unordered-containers, exceptions, conduit-combinators, scientific
+  default-language:    Haskell2010

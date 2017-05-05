@@ -1,0 +1,19 @@
+	Mon May  1 23:32 2017 Time and Allocation Profiling Report  (Final)
+
+	   cardano-node +RTS -N -N1 -pa -RTS --system-start 1492428658 --explicit-initial --listen 127.0.0.1:12100 --log-config util-scripts/log-config-abc.yaml --logs-prefix logs/abc --db-path db-abc --peer 52.58.74.124:3000/zzQk9aJKJ9CGD3ATxO_RGUX_s7TTVS-_hw8mRkX6u9g= --peer 52.56.162.206:3000/QBO0SV4gxvrGcBDyJaBf_tfs_zrW0uoYSkhiRgbVs4M= --wallet --wallet-db-path wdb-abc --kademlia-dump-path kademlia-abc.dump
+
+	total time  =       24.52 secs   (24525 ticks @ 1000 us, 1 processor)
+	total alloc = 20,141,197,160 bytes  (excludes profiling overheads)
+
+COST CENTRE                                                                                         MODULE                                         SRC                                                                                                      %time %alloc  ticks     bytes
+
+foo                                                                                         PROFILING                                      <built-in>                                                                                                13.6    0.0   3326         0
+
+                                                                                                                                                                                                                                                                                                                                                             individual      inherited
+COST CENTRE                                                                                                                                                                            MODULE                                         SRC                                                                                              no.        entries  %time %alloc   %time %alloc  ticks     bytes
+
+get                                                                                                                                                            Database.RocksDB.Base                          src/Database/RocksDB/Base.hs:(245,1)-(256,27)                                                    166704          1    0.0    0.0     5.0    0.0      0       112
+foo                                                                                                                                                            Database.RocksDB.Base                          src/Database/RocksDB/Base.hs:(245,1)-(256,27)                                                    166704          1    0.0    0.0     5.0    0.0      0       112
+  get                                                                                                                                                            Database.RocksDB.Base                          src/Database/RocksDB/Base.hs:(245,1)-(256,27)                                                    166704          1    0.0    0.0     5.0    0.0      0       112
+    get                                                                                                                                                            Database.RocksDB.Base                          src/Database/RocksDB/Base.hs:(245,1)-(256,27)                                                    166704          1    0.0    0.0     2.0    0.0      0       112
+foo                                                                                                                                                            Database.RocksDB.Base                          src/Database/RocksDB/Base.hs:(245,1)-(256,27)                                                    166704          1    0.0    0.0     3.0    0.0      0       112

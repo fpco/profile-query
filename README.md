@@ -1,3 +1,5 @@
 # profile-query
 
-add description of profile-query here
+Demo:
+
+    stack build && time stack exec -- profile-query test.prof get

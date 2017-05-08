@@ -1,11 +1,12 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Query profiling files and generate reports.
+
 module Main where
 
 import           Control.Exception
 import           Control.Monad.Catch
-import           Control.Monad.IO.Class
 import           Data.Attoparsec.Text as A
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as S
@@ -14,21 +15,67 @@ import           Data.Conduit
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit.Combinators as CL (dropWhile)
 import qualified Data.Conduit.List as CL
+import           Data.Map.Strict (Map)
+import           Data.Monoid
 import           Data.Scientific
+import           Data.Text (Text)
 import qualified Data.Text.Encoding as T
 import           Data.Typeable
 import qualified GHC.Prof.Parser as GHCProf
 import           GHC.Prof.Types
-import           System.Environment
+import           Options.Applicative.Simple
+
+--------------------------------------------------------------------------------
+-- Types
+
+data CostCentres = CostCentres
+  { costCentresTime :: !Scientific
+  , costCentresAlloc :: !Scientific
+  } deriving (Show)
+
+--------------------------------------------------------------------------------
+-- Main entry point
 
 main :: IO ()
 main = do
-  fp:sym:_ <- getArgs
+  (m, ()) <-
+    simpleOptions
+      "0"
+      "profile-query"
+      "Query .prof files"
+      ((\file -> maybe (general file) (specific file)) <$>
+       strOption (long "file" <> short 'f') <*>
+       optional (strOption (long "name" <> short 'n')))
+      empty
+  m
+
+-- | General summary for all cost centres.
+general :: FilePath -> IO ()
+general fp = do
+  allThings <- runConduitRes (CB.sourceFile fp .| CB.lines .| aggregate)
+  return ()
+
+-- | Summarize for a specific cost centre name.
+specific :: FilePath -> String -> IO ()
+specific fp sym = do
   total <-
     runConduitRes
       (CB.sourceFile fp .| CB.lines .| filterMatching sym .|
-       CL.fold (\(!total) cost -> costCentreInhTime cost + total) 0.0)
-  putStrLn ("Total inherited %time: " ++ formatScientific Fixed (Just 2) total)
+       CL.fold
+         (\CostCentres { costCentresTime = totalTime
+                       , costCentresAlloc = totalAlloc
+                       } cost ->
+            CostCentres
+            { costCentresTime = costCentreInhTime cost + totalTime
+            , costCentresAlloc = costCentreInhAlloc cost + totalAlloc
+            })
+         (CostCentres 0 0))
+  putStrLn
+    ("Total %alloc: " ++
+     formatScientific Fixed (Just 2) (costCentresAlloc total))
+  putStrLn
+    ("Total %time: " ++
+     formatScientific Fixed (Just 2) (costCentresTime total))
 
 --------------------------------------------------------------------------------
 -- A conduit for querying specific cost centres
@@ -54,6 +101,12 @@ filterMatching sym = profileCostCentres (CL.concatMapAccum collect Nothing)
       where
         indentation = S.length (S.takeWhile (== 32) line)
         isPrefix = S.isPrefixOf prefix (S.dropWhile (== 32) line)
+
+aggregate
+  :: MonadThrow m
+  => Consumer ByteString m (Map Text CostCentres)
+aggregate =
+  profileCostCentres (CL.map id) .| CL.fold const mempty
 
 --------------------------------------------------------------------------------
 -- A conduit for parsing cost centres

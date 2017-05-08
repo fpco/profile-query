@@ -17,6 +17,20 @@ executable profile-query
   hs-source-dirs:      app
   main-is:             Main.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N -O2
-  build-depends:       base
-                     , conduit, conduit-extra, ghc-prof, text, bytestring, attoparsec, containers ,unordered-containers, exceptions, conduit-combinators, scientific, optparse-simple
+  build-depends:
+    base,
+    conduit,
+    conduit-extra,
+    ghc-prof,
+    text,
+    bytestring,
+    attoparsec,
+    containers,
+    vector-algorithms,
+    exceptions,
+    vector,
+    conduit-combinators,
+    scientific,
+    optparse-simple,
+    unordered-containers
   default-language:    Haskell2010

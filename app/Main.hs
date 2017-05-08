@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,7 +8,8 @@ module Main where
 
 import           Control.Exception
 import           Control.Monad.Catch
-import           Data.Attoparsec.Text as A
+import           Control.Monad.IO.Class
+import qualified Data.Attoparsec.Text as A
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as S8
@@ -15,15 +17,25 @@ import           Data.Conduit
 import qualified Data.Conduit.Binary as CB
 import qualified Data.Conduit.Combinators as CL (dropWhile)
 import qualified Data.Conduit.List as CL
-import           Data.Map.Strict (Map)
+import           Data.Function
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as M
+import           Data.List
 import           Data.Monoid
+import           Data.Ord
 import           Data.Scientific
 import           Data.Text (Text)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import qualified Data.Text.Lazy.IO as LT
 import           Data.Typeable
+import qualified Data.Vector as V
+import qualified Data.Vector.Algorithms.Merge as V
+import           GHC.Prof
 import qualified GHC.Prof.Parser as GHCProf
-import           GHC.Prof.Types
 import           Options.Applicative.Simple
+import           System.Environment
+import           Text.Printf
 
 --------------------------------------------------------------------------------
 -- Types
@@ -33,37 +45,123 @@ data CostCentres = CostCentres
   , costCentresAlloc :: !Scientific
   } deriving (Show)
 
+data SortBy
+  = Time
+  | Alloc
+  deriving (Show)
+
+data Order
+  = Asc
+  | Desc
+  deriving (Show)
+
 --------------------------------------------------------------------------------
 -- Main entry point
 
 main :: IO ()
+main0 :: IO ()
+main0 = do
+  fp:_ <- getArgs
+  file <- LT.readFile fp
+  case decode file of
+    Left e -> error e
+    Right p ->
+      putStrLn
+        (tablize
+           ([[(True, "Name"), (False, "%alloc"), (False, "%time")]] ++
+            map
+              (\(name, cost) ->
+                 [ (True, T.unpack name)
+                 , ( False
+                   , formatScientific Fixed (Just 2) (costCentresAlloc cost))
+                 , ( False
+                   , formatScientific Fixed (Just 2) (costCentresTime cost))
+                 ])
+              (take
+                 30
+                 (sortBy
+                    (flip (comparing (costCentresAlloc . snd)))
+                    (M.toList
+                       (foldl' aggregate mempty (profileTopCostCentres p)))))))
+      where aggregate histogram cost =
+              M.insertWith
+                (\x y ->
+                   CostCentres
+                   { costCentresTime = on (+) costCentresTime x y
+                   , costCentresAlloc = on (+) costCentresAlloc x y
+                   })
+                (aggregatedCostCentreName cost)
+                (CostCentres
+                 { costCentresTime = aggregatedCostCentreTime cost
+                 , costCentresAlloc = aggregatedCostCentreAlloc cost
+                 })
+                histogram
+
 main = do
   (m, ()) <-
     simpleOptions
       "0"
       "profile-query"
       "Query .prof files"
-      ((\file -> maybe (general file) (specific file)) <$>
+      ((\file name limit cmp order ->
+          maybe (general file limit cmp order) (specific file) name) <$>
        strOption (long "file" <> short 'f') <*>
-       optional (strOption (long "name" <> short 'n')))
+       optional (strOption (long "name" <> short 'n')) <*>
+       option auto (long "limit" <> short 'l' <> value 30) <*>
+       option
+         (maybeReader
+            (\case
+               "time" -> Just Time
+               "alloc" -> Just Alloc
+               _ -> Nothing))
+         (long "sort" <> short 's' <> value Time) <*>
+       option
+         (maybeReader
+            (\case
+               "asc" -> Just Asc
+               "desc" -> Just Desc
+               _ -> Nothing))
+         (long "order" <> value Desc))
       empty
   m
 
 -- | General summary for all cost centres.
-general :: FilePath -> IO ()
-general fp = do
-  allThings <- runConduitRes (CB.sourceFile fp .| CB.lines .| aggregate)
-  return ()
+general :: FilePath -> Int -> SortBy -> Order -> IO ()
+general fp limit cmp order = do
+  !histogram <- runConduitRes (CB.sourceFile fp .| CB.lines .| generalHistogram)
+  mv <- V.unsafeThaw (V.fromList (M.toList histogram))
+  let comparison = ordering (field . snd)
+        where
+          field =
+            case cmp of
+              Time -> costCentresTime
+              Alloc -> costCentresAlloc
+          ordering =
+            case order of
+              Asc -> comparing
+              Desc -> flip . comparing
+  V.sortBy comparison mv
+  v <- V.freeze mv
+  putStrLn
+    (tablize
+       ([[(True, "Name"), (False, "%alloc"), (False, "%time")]] ++
+        map
+          (\(name, cost) ->
+             [ (True, T.unpack name)
+             , (False, formatScientific Fixed (Just 2) (costCentresAlloc cost))
+             , (False, formatScientific Fixed (Just 2) (costCentresTime cost))
+             ])
+          (V.toList (V.take limit v))))
 
 -- | Summarize for a specific cost centre name.
 specific :: FilePath -> String -> IO ()
 specific fp sym = do
   total <-
     runConduitRes
-      (CB.sourceFile fp .| CB.lines .| filterMatching sym .|
+      (CB.sourceFile fp .| CB.lines .| specificSum sym .|
        CL.fold
-         (\CostCentres { costCentresTime = totalTime
-                       , costCentresAlloc = totalAlloc
+         (\CostCentres { costCentresTime = (!totalTime)
+                       , costCentresAlloc = (!totalAlloc)
                        } cost ->
             CostCentres
             { costCentresTime = costCentreInhTime cost + totalTime
@@ -80,33 +178,63 @@ specific fp sym = do
 --------------------------------------------------------------------------------
 -- A conduit for querying specific cost centres
 
-filterMatching
+specificSum
   :: MonadThrow m
   => String -> Conduit ByteString m CostCentre
-filterMatching sym = profileCostCentres (CL.concatMapAccum collect Nothing)
+specificSum sym = profileCostCentres (CL.concatMapAccum collect Nothing)
   where
     prefix = S8.pack (sym ++ " ")
     collect line mcolumn =
       case mcolumn of
         Nothing ->
           if isPrefix
-             then (Just indentation, [line])
-             else (Nothing, [])
+            then (Just indentation, [line])
+            else (Nothing, [])
         Just column ->
           if indentation <= column
-             then (if isPrefix
-                      then (Just indentation, [line])
-                      else (Nothing, []))
-             else (Just column, [])
+            then (if isPrefix
+                    then (Just indentation, [line])
+                    else (Nothing, []))
+            else (Just column, [])
       where
         indentation = S.length (S.takeWhile (== 32) line)
         isPrefix = S.isPrefixOf prefix (S.dropWhile (== 32) line)
 
-aggregate
-  :: MonadThrow m
-  => Consumer ByteString m (Map Text CostCentres)
-aggregate =
-  profileCostCentres (CL.map id) .| CL.fold const mempty
+--------------------------------------------------------------------------------
+-- A consumer of all cost centres producing a histogram
+
+generalHistogram
+  :: (MonadIO m, MonadThrow m)
+  => Consumer ByteString m (HashMap Text CostCentres)
+generalHistogram =
+  profileCostCentres (CL.concatMapAccum collect []) .|
+  CL.fold aggregate mempty
+  where
+    collect line ancestors =
+      let result =
+            if column > length ancestors
+              then if elem key ancestors
+                     then (ancestors, [])
+                     else ((key : ancestors), [line])
+              else ( (key : drop (1 + (length ancestors - column)) ancestors)
+                   , [line])
+      in result
+      where
+        column = S.length (S.takeWhile (== 32) line)
+        key = S.takeWhile (/= 32) (S.dropWhile (== 32) line)
+    aggregate histogram cost =
+      M.insertWith
+        (\x y ->
+           CostCentres
+           { costCentresTime = on (+) costCentresTime x y
+           , costCentresAlloc = on (+) costCentresAlloc x y
+           })
+        (costCentreName cost)
+        (CostCentres
+         { costCentresTime = costCentreInhTime cost
+         , costCentresAlloc = costCentreInhAlloc cost
+         })
+        histogram
 
 --------------------------------------------------------------------------------
 -- A conduit for parsing cost centres
@@ -153,7 +281,21 @@ profileCostCentres inner = do
       atto GHCProf.header l
     line = await >>= maybe (throwM EndOfInput) pure
     atto p bytes = do
-      case parseOnly p (T.decodeUtf8 (S.dropWhile (== 32) bytes)) of
+      case A.parseOnly p (T.decodeUtf8 (S.dropWhile (== 32) bytes)) of
         Left e -> throwM (ParseError bytes e)
         Right !v -> do
           pure v
+
+--------------------------------------------------------------------------------
+-- Handy UI facilities
+
+-- | Make a table out of a list of rows.
+tablize :: [[(Bool,String)]] -> String
+tablize xs =
+  intercalate "\n"
+              (map (intercalate "  " . map fill . zip [0 ..]) xs)
+  where fill (x',(left',text')) = printf ("%" ++ direction ++ show width ++ "s") text'
+          where direction = if left'
+                               then "-"
+                               else ""
+                width = maximum (map (length . snd . (!! x')) xs)

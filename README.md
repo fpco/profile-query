@@ -10,6 +10,6 @@ To list the cost of a single cost centre name:
 
 To change the sorting field:
 
-    profile-query -f iohk.prof -n get -s alloc
+    profile-query -f iohk.prof -l 50 -s alloc
 
 Default sorting is by time.

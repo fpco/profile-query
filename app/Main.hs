@@ -78,18 +78,19 @@ main0 = do
                    , formatScientific Fixed (Just 2) (costCentresTime cost))
                  ])
               (take
-                 30
+                 1000
                  (sortBy
                     (flip (comparing (costCentresAlloc . snd)))
                     (M.toList
                        (foldl' aggregate mempty (profileTopCostCentres p)))))))
       where aggregate histogram cost =
               M.insertWith
-                (\x y ->
+                const
+                {-(\x y ->
                    CostCentres
                    { costCentresTime = on (+) costCentresTime x y
                    , costCentresAlloc = on (+) costCentresAlloc x y
-                   })
+                   })-}
                 (aggregatedCostCentreName cost)
                 (CostCentres
                  { costCentresTime = aggregatedCostCentreTime cost
@@ -207,20 +208,14 @@ generalHistogram
   :: (MonadIO m, MonadThrow m)
   => Consumer ByteString m (HashMap Text CostCentres)
 generalHistogram =
-  profileCostCentres (CL.concatMapAccum collect []) .|
-  CL.fold aggregate mempty
+  profileCostCentres (CL.concatMapAccum collect []) .| CL.fold aggregate mempty
   where
-    collect line ancestors =
-      let result =
-            if column > length ancestors
-              then if elem key ancestors
-                     then (ancestors, [])
-                     else ((key : ancestors), [line])
-              else ( (key : drop (1 + (length ancestors - column)) ancestors)
-                   , [line])
-      in result
+    collect line stack0 =
+      (([key | child] ++ stack), [line | not (elem key stack)])
       where
-        column = S.length (S.takeWhile (== 32) line)
+        child = spaces >= length stack
+        stack = reverse (take spaces (reverse stack0))
+        spaces = S.length (S.takeWhile (== 32) line)
         key = S.takeWhile (/= 32) (S.dropWhile (== 32) line)
     aggregate histogram cost =
       M.insertWith

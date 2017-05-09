@@ -172,7 +172,7 @@ generalHistogram =
   profileCostCentres (CL.concatMapAccum collect []) .| CL.fold aggregate mempty
   where
     collect line stack0 =
-      (([key | child] ++ stack), [line | not (elem key stack)])
+      ([key | child] ++ stack, [line | not (elem key stack)])
       where
         child = spaces >= length stack
         stack = reverse (take spaces (reverse stack0))

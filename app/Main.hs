@@ -59,45 +59,6 @@ data Order
 -- Main entry point
 
 main :: IO ()
-main0 :: IO ()
-main0 = do
-  fp:_ <- getArgs
-  file <- LT.readFile fp
-  case decode file of
-    Left e -> error e
-    Right p ->
-      putStrLn
-        (tablize
-           ([[(True, "Name"), (False, "%alloc"), (False, "%time")]] ++
-            map
-              (\(name, cost) ->
-                 [ (True, T.unpack name)
-                 , ( False
-                   , formatScientific Fixed (Just 2) (costCentresAlloc cost))
-                 , ( False
-                   , formatScientific Fixed (Just 2) (costCentresTime cost))
-                 ])
-              (take
-                 1000
-                 (sortBy
-                    (flip (comparing (costCentresAlloc . snd)))
-                    (M.toList
-                       (foldl' aggregate mempty (profileTopCostCentres p)))))))
-      where aggregate histogram cost =
-              M.insertWith
-                const
-                {-(\x y ->
-                   CostCentres
-                   { costCentresTime = on (+) costCentresTime x y
-                   , costCentresAlloc = on (+) costCentresAlloc x y
-                   })-}
-                (aggregatedCostCentreName cost)
-                (CostCentres
-                 { costCentresTime = aggregatedCostCentreTime cost
-                 , costCentresAlloc = aggregatedCostCentreAlloc cost
-                 })
-                histogram
-
 main = do
   (m, ()) <-
     simpleOptions
